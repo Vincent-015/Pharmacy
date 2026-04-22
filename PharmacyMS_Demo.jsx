@@ -16,7 +16,7 @@ const SEED = {
     { id: 5, name: "Metformin 500mg", genericName: "Metformin HCl", category: "Diabetes", price: 18.50, stock: 180, reorderLevel: 20, unit: "tablet", supplierId: 3, expiryDate: "2026-03-10", status: "active", description: "Blood sugar control" },
     { id: 6, name: "Omeprazole 20mg", genericName: "Omeprazole", category: "Gastrointestinal", price: 25.00, stock: 100, reorderLevel: 10, unit: "capsule", supplierId: 3, expiryDate: "2025-09-01", status: "active", description: "Acid reflux treatment" },
     { id: 7, name: "Vitamin C 500mg", genericName: "Ascorbic Acid", category: "Vitamins", price: 6.00, stock: 600, reorderLevel: 60, unit: "tablet", supplierId: 1, expiryDate: "2027-01-15", status: "active", description: "Immune system support" },
-    { id: 8, name: "Cetirizine 10mg", genericName: "Cetirizine HCl", category: "Antihistamine", price: 10.50, stock: 8, reorderLevel: 20, unit: "tablet", supplierId: 2, expiryDate: "2026-05-30", status: "active", description: "Allergy relief" },
+    { id: 8, name: "Cetirizine 10mg", genericName: "Cetirizine HCl", category: "Antihistamine", price: 5.50, stock: 8, reorderLevel: 20, unit: "tablet", supplierId: 2, expiryDate: "2026-05-30", status: "active", description: "Allergy relief" },
   ],
   customers: [
     { id: 1, firstName: "Maria", lastName: "Santos", phone: "+63 912 345 6789", email: "maria@gmail.com", address: "Cebu City" },
@@ -343,7 +343,7 @@ export default function App() {
         <div className="pms-fg"><label>Username</label><input value={loginUser} onChange={e=>setLoginUser(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder="Enter username"/></div>
         <div className="pms-fg"><label>Password</label><input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder="Enter password"/></div>
         <button className="pms-login-btn" onClick={doLogin}>Sign In →</button>
-        <div className="pms-login-hint">Default: admin / admin123</div>
+
       </div>
     </div>
   );
@@ -551,7 +551,7 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
   const [payment, setPayment] = useState("cash");
   const [discount, setDiscount] = useState(0);
   const [amtPaid, setAmtPaid] = useState(0);
-
+  
   const filtered = medicines.filter(m => m.status === "active" && m.stock > 0 && (
     !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.genericName.toLowerCase().includes(search.toLowerCase()) || m.category.toLowerCase().includes(search.toLowerCase())
   ));
