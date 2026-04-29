@@ -403,7 +403,7 @@ export default function App() {
         <div className="pms-content">
           {page === "dashboard" && <DashboardPage medicines={medicines} sales={sales} customers={customers} setPage={setPage} />}
           {page === "pos" && <POSPage medicines={medicines} setMedicines={setMedicines} customers={customers} sales={sales} setSales={setSales} setStockMovements={setStockMovements} setReceipt={setReceipt} nextId={nextId} />}
-          {page === "medicines" && <MedicinesPage medicines={medicines} setMedicines={setMedicines} suppliers={suppliers} setModal={setModal} nextId={nextId} />}
+          {page === "medicines" && <MedicinesPage medicines={medicines} setMedicines={setMedicines} suppliers={suppliers} nextId={nextId} />}
           {page === "suppliers" && <SuppliersPage suppliers={suppliers} setSuppliers={setSuppliers} medicines={medicines} setModal={setModal} nextId={nextId} />}
           {page === "stock" && <StockPage medicines={medicines} setMedicines={setMedicines} stockMovements={stockMovements} setStockMovements={setStockMovements} setModal={setModal} nextId={nextId} />}
           {page === "customers" && <CustomersPage customers={customers} setCustomers={setCustomers} sales={sales} setModal={setModal} nextId={nextId} />}
@@ -451,8 +451,14 @@ export default function App() {
                 </div>
               ))}
               <hr className="pms-rcpt-div"/>
-              <div className="pms-rcpt-row"><span>Subtotal</span><span>{fmt(receipt.subTotal)}</span></div>
-              <div className="pms-rcpt-row"><span>Discount</span><span>−{fmt(receipt.discount)}</span></div>
+              <div className="pms-rcpt-row"><span>Subtotal (VAT-incl.)</span><span>{fmt(receipt.subTotal)}</span></div>
+              {receipt.isSenior ? <>
+                <div className="pms-rcpt-row" style={{color:"#f59e0b"}}><span>VAT Removed (12%)</span><span>−{fmt(receipt.vatAmount||0)}</span></div>
+                <div className="pms-rcpt-row" style={{color:"#f59e0b"}}><span>SC Discount (20%)</span><span>−{fmt(receipt.seniorDiscount||0)}</span></div>
+              </> : <>
+                <div className="pms-rcpt-row" style={{color:"#94a3b8"}}><span>VAT (12% incl.)</span><span>{fmt((receipt.subTotal/(1.12))*0.12)}</span></div>
+                {receipt.extraDiscount>0 && <div className="pms-rcpt-row"><span>Discount</span><span>−{fmt(receipt.extraDiscount)}</span></div>}
+              </>}
               <div className="pms-rcpt-row bold"><span>TOTAL</span><span>{fmt(receipt.total)}</span></div>
               <div className="pms-rcpt-row"><span>Paid ({receipt.paymentMethod})</span><span>{fmt(receipt.amountPaid)}</span></div>
               <div className="pms-rcpt-row" style={{color:"#10b981",fontWeight:700}}><span>Change</span><span>{fmt(receipt.change)}</span></div>
@@ -549,7 +555,8 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [payment, setPayment] = useState("cash");
-  const [discount, setDiscount] = useState(0);
+  const [isSenior, setIsSenior] = useState(false);
+  const [manualDiscount, setManualDiscount] = useState(0);
   const [amtPaid, setAmtPaid] = useState(0);
   
   const filtered = medicines.filter(m => m.status === "active" && m.stock > 0 && (
@@ -576,8 +583,16 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
     return prev.map(i=>i.id===id?{...i,qty:newQty}:i);
   });
 
+  // VAT-exclusive pricing: prices are VAT-inclusive (12%)
+  // Senior citizen discount: 20% off VAT-exclusive price (VAT also removed for SC)
   const subtotal = cart.reduce((s,i)=>s+i.price*i.qty, 0);
-  const total = Math.max(0, subtotal - Number(discount));
+  const vatRate = 0.12;
+  const vatExclusive = subtotal / (1 + vatRate); // price without VAT
+  const vatAmount = subtotal - vatExclusive;
+  const seniorDiscount = isSenior ? vatExclusive * 0.20 : 0;
+  const extraDiscount = Number(manualDiscount) || 0;
+  const totalDiscount = isSenior ? (vatAmount + seniorDiscount) : extraDiscount; // SC: remove VAT + 20% of VAT-excl
+  const total = Math.max(0, subtotal - totalDiscount);
   const change = Math.max(0, Number(amtPaid) - total);
 
   const checkout = () => {
@@ -586,15 +601,15 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
     const receiptNumber = `RX-${new Date().toISOString().slice(0,10).replace(/-/g,"")}-${Math.floor(Math.random()*9000)+1000}`;
     const cust = customers.find(c=>c.id===Number(customerId));
     const saleItems = cart.map(i => ({ medicineId:i.id, medicineName:i.name, quantity:i.qty, unitPrice:i.price, subtotal:i.price*i.qty }));
-    const newSale = { id: Date.now(), receiptNumber, customerId: customerId?Number(customerId):null, items: saleItems, subTotal: subtotal, discount: Number(discount), total, paymentMethod: payment, amountPaid: Number(amtPaid), change, status:"completed", createdAt: new Date().toISOString() };
+    const newSale = { id: Date.now(), receiptNumber, customerId: customerId?Number(customerId):null, items: saleItems, subTotal: subtotal, discount: totalDiscount, isSenior, total, paymentMethod: payment, amountPaid: Number(amtPaid), change, status:"completed", createdAt: new Date().toISOString() };
     setSales(prev => [...prev, newSale]);
     setMedicines(prev => prev.map(m => {
       const ci = cart.find(i=>i.id===m.id);
       return ci ? {...m, stock: m.stock - ci.qty} : m;
     }));
     setStockMovements(prev => [...prev, ...cart.map(i => ({ id:Date.now()+i.id, medicineId:i.id, medicineName:i.name, type:"out", quantity:i.qty, reason:`Sale ${receiptNumber}`, createdAt: new Date().toISOString() }))]);
-    setReceipt({ receiptNumber, customerName: cust?`${cust.firstName} ${cust.lastName}`:"Walk-in", items: saleItems, subTotal: subtotal, discount: Number(discount), total, paymentMethod: payment, amountPaid: Number(amtPaid), change });
-    setCart([]); setDiscount(0); setAmtPaid(0); setCustomerId(""); setPayment("cash");
+    setReceipt({ receiptNumber, customerName: cust?`${cust.firstName} ${cust.lastName}`:"Walk-in", items: saleItems, subTotal: subtotal, vatAmount: isSenior ? vatAmount : 0, seniorDiscount: isSenior ? seniorDiscount : 0, extraDiscount: isSenior ? 0 : extraDiscount, discount: totalDiscount, isSenior, total, paymentMethod: payment, amountPaid: Number(amtPaid), change });
+    setCart([]); setManualDiscount(0); setAmtPaid(0); setCustomerId(""); setPayment("cash"); setIsSenior(false);
   };
 
   return (
@@ -654,8 +669,24 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
               <option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="card">Card</option>
             </select>
           </div>
-          <div className="pms-sum-row"><span>Subtotal</span><span style={{fontWeight:600}}>{fmt(subtotal)}</span></div>
-          <div className="pms-sum-row"><span>Discount (₱)</span><input type="number" value={discount} onChange={e=>setDiscount(e.target.value)} min="0" style={{width:90,textAlign:"right"}}/></div>
+          {/* Senior Citizen Toggle */}
+          <div className="pms-sum-row" style={{background: isSenior?"#fef3c7":"transparent", borderRadius:6, padding: isSenior?"4px 6px":"0", transition:"all .2s"}}>
+            <span style={{fontWeight: isSenior?700:"normal", color: isSenior?"#92400e":"inherit"}}>👴 Senior Citizen</span>
+            <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+              <span style={{fontSize:11,color: isSenior?"#92400e":"#94a3b8"}}>{isSenior?"ON":"OFF"}</span>
+              <div onClick={()=>{setIsSenior(s=>!s); setManualDiscount(0);}} style={{width:36,height:20,borderRadius:10,background: isSenior?"#f59e0b":"#e2e8f0",position:"relative",cursor:"pointer",transition:"background .2s"}}>
+                <div style={{width:16,height:16,borderRadius:"50%",background:"white",position:"absolute",top:2,left: isSenior?18:2,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}/>
+              </div>
+            </label>
+          </div>
+          <div className="pms-sum-row"><span>Subtotal (VAT-incl.)</span><span style={{fontWeight:600}}>{fmt(subtotal)}</span></div>
+          {isSenior ? <>
+            <div className="pms-sum-row" style={{color:"#f59e0b"}}><span>VAT removed (12%)</span><span>−{fmt(vatAmount)}</span></div>
+            <div className="pms-sum-row" style={{color:"#f59e0b"}}><span>SC Discount (20%)</span><span>−{fmt(seniorDiscount)}</span></div>
+          </> : <>
+            <div className="pms-sum-row"><span>VAT (12% incl.)</span><span style={{color:"#94a3b8"}}>{fmt(vatAmount)}</span></div>
+            <div className="pms-sum-row"><span>Discount (₱)</span><input type="number" value={manualDiscount} onChange={e=>setManualDiscount(e.target.value)} min="0" style={{width:90,textAlign:"right"}}/></div>
+          </>}
           <div className="pms-sum-row total"><span>TOTAL</span><span>{fmt(total)}</span></div>
           <div className="pms-sum-row"><span>Amount Paid</span><input type="number" value={amtPaid} onChange={e=>setAmtPaid(e.target.value)} min="0" style={{width:110,textAlign:"right"}}/></div>
           <div className="pms-sum-row" style={{color:"#10b981",fontWeight:700}}><span>Change</span><span>{fmt(change)}</span></div>
@@ -668,68 +699,63 @@ function POSPage({ medicines, setMedicines, customers, sales, setSales, setStock
 }
 
 // ── MEDICINES ──────────────────────────────────────────────────────────────────
-function MedicinesPage({ medicines, setMedicines, suppliers, setModal, nextId }) {
-  const [search, setSearch] = useState("");
-  const filtered = medicines.filter(m => !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.genericName.toLowerCase().includes(search.toLowerCase()));
-  const lowCount = medicines.filter(m=>m.stock<=m.reorderLevel&&m.status==="active").length;
+function MedicinesPage({ medicines, setMedicines, suppliers }) {
+  const CATS = ["Analgesic","Antibiotic","Antihistamine","Cardiovascular","Cold & Flu","Diabetes","Gastrointestinal","Vitamins","Other"];
+  const UNITS = ["tablet","capsule","bottle","sachet","pcs","ml","mg"];
 
-  const openForm = (med=null) => {
-    let form = { name:med?.name||"", genericName:med?.genericName||"", category:med?.category||"Analgesic", price:med?.price||"", stock:med?.stock||0, reorderLevel:med?.reorderLevel||10, unit:med?.unit||"tablet", supplierId:med?.supplierId||"", expiryDate:med?.expiryDate||"", status:med?.status||"active", description:med?.description||"" };
-    const CATS = ["Analgesic","Antibiotic","Antihistamine","Cardiovascular","Cold & Flu","Diabetes","Gastrointestinal","Vitamins","Other"];
-    const UNITS = ["tablet","capsule","bottle","sachet","pcs","ml","mg"];
-    const F = ({label,id,type="text",opts,value,onChange,col2}) => (
-      <div className={`pms-fg-m${col2?" col2":""}`}>
-        <label>{label}</label>
-        {opts ? <select value={value} onChange={onChange}>{opts.map(o=><option key={o} value={o}>{o}</option>)}</select>
-               : <input type={type} value={value} onChange={onChange} style={id==="price"?{fontFamily:"'DM Mono',monospace"}:{}}/>}
-      </div>
-    );
-    const render = (f) => (
-      <div>
-        <div className="pms-modal-body">
-          <div className="pms-fgrid">
-            <F col2 label="Medicine Name *" value={f.name} onChange={e=>{f.name=e.target.value;render(f);}}/>
-            <F label="Generic Name *" value={f.genericName} onChange={e=>{f.genericName=e.target.value;render(f);}}/>
-            <F label="Category" opts={CATS} value={f.category} onChange={e=>{f.category=e.target.value;render(f);}}/>
-            <F label="Price (₱) *" type="number" value={f.price} onChange={e=>{f.price=e.target.value;render(f);}}/>
-            <F label="Stock" type="number" value={f.stock} onChange={e=>{f.stock=e.target.value;render(f);}}/>
-            <F label="Reorder Level" type="number" value={f.reorderLevel} onChange={e=>{f.reorderLevel=e.target.value;render(f);}}/>
-            <F label="Unit" opts={UNITS} value={f.unit} onChange={e=>{f.unit=e.target.value;render(f);}}/>
-            <div className="pms-fg-m"><label>Supplier</label>
-              <select value={f.supplierId} onChange={e=>{f.supplierId=e.target.value;render(f);}}>
-                <option value="">— None —</option>
-                {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <F label="Expiry Date *" type="date" value={f.expiryDate} onChange={e=>{f.expiryDate=e.target.value;render(f);}}/>
-            {med && <F label="Status" opts={["active","inactive"]} value={f.status} onChange={e=>{f.status=e.target.value;render(f);}}/>}
-            <F col2 label="Description" value={f.description} onChange={e=>{f.description=e.target.value;render(f);}}/>
-          </div>
-        </div>
-        <div className="pms-modal-footer">
-          <button className="btn-o" onClick={()=>setModal(null)}>Cancel</button>
-          <button className="btn-p" onClick={()=>save(f)}>{med?"Save Changes":"Add Medicine"}</button>
-        </div>
-      </div>
-    );
-    const save = (f) => {
-      if (!f.name||!f.genericName||!f.price||!f.expiryDate) { alert("Fill required fields"); return; }
-      if (med) {
-        setMedicines(p=>p.map(m=>m.id===med.id?{...m,...f,price:parseFloat(f.price),stock:parseInt(f.stock),reorderLevel:parseInt(f.reorderLevel),supplierId:f.supplierId?parseInt(f.supplierId):null}:m));
-      } else {
-        const id = Date.now();
-        setMedicines(p=>[...p,{id,...f,price:parseFloat(f.price),stock:parseInt(f.stock),reorderLevel:parseInt(f.reorderLevel),supplierId:f.supplierId?parseInt(f.supplierId):null}]);
-      }
-      setModal(null);
-    };
-    setModal({ title: med?"Edit Medicine":"Add Medicine", body: render(form) });
+  const [search, setSearch] = useState("");
+  // medModal: null = closed, { med: object|null } = open (null med = add, object = edit)
+  const [medModal, setMedModal] = useState(null);
+  const [form, setForm] = useState({});
+  const [formErr, setFormErr] = useState("");
+
+  const filtered = medicines.filter(m =>
+    !search ||
+    m.name.toLowerCase().includes(search.toLowerCase()) ||
+    m.genericName.toLowerCase().includes(search.toLowerCase())
+  );
+  const lowCount = medicines.filter(m => m.stock <= m.reorderLevel && m.status === "active").length;
+
+  const openAdd = () => {
+    setForm({ name:"", genericName:"", category:"Analgesic", price:"", stock:0, reorderLevel:10, unit:"tablet", supplierId:"", expiryDate:"", status:"active", description:"" });
+    setFormErr("");
+    setMedModal({ med: null });
+  };
+
+  const openEdit = (m) => {
+    setForm({ name:m.name, genericName:m.genericName, category:m.category, price:m.price, stock:m.stock, reorderLevel:m.reorderLevel, unit:m.unit, supplierId:m.supplierId||"", expiryDate:m.expiryDate, status:m.status, description:m.description||"" });
+    setFormErr("");
+    setMedModal({ med: m });
+  };
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const save = () => {
+    if (!form.name || !form.genericName || !form.price || !form.expiryDate) {
+      setFormErr("Please fill all required (*) fields."); return;
+    }
+    const dup = medicines.find(m => m.name.toLowerCase() === form.name.toLowerCase() && m.id !== medModal.med?.id);
+    if (dup) { setFormErr(`"${form.name}" already exists in the medicines list.`); return; }
+    const data = { ...form, price: parseFloat(form.price), stock: parseInt(form.stock), reorderLevel: parseInt(form.reorderLevel), supplierId: form.supplierId ? parseInt(form.supplierId) : null };
+    if (medModal.med) {
+      setMedicines(p => p.map(m => m.id === medModal.med.id ? { ...m, ...data } : m));
+    } else {
+      setMedicines(p => [...p, { id: Date.now(), ...data }]);
+    }
+    setMedModal(null);
+  };
+
+  const deleteMed = (m) => {
+    if (confirm(`Delete "${m.name}" permanently? This cannot be undone.`)) {
+      setMedicines(p => p.filter(x => x.id !== m.id));
+    }
   };
 
   return (
     <div>
       <div className="pms-ph">
         <div><h1>Medicines</h1><p>{medicines.length} medicine(s) · {lowCount} low stock</p></div>
-        <button className="btn-p" onClick={()=>openForm()}>{I.plus} Add Medicine</button>
+        <button className="btn-p" onClick={openAdd}>{I.plus} Add Medicine</button>
       </div>
       <div style={{marginBottom:14}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍  Search medicines..." style={{borderRadius:8,border:"1px solid #e2e8f0",padding:"9px 14px",fontSize:13,fontFamily:"'Sora',sans-serif",outline:"none",width:280}}/>
@@ -739,7 +765,7 @@ function MedicinesPage({ medicines, setMedicines, suppliers, setModal, nextId })
           <thead><tr><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Supplier</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {filtered.map(m => {
-              const sup = suppliers.find(s=>s.id===m.supplierId);
+              const sup = suppliers.find(s => s.id === m.supplierId);
               const isLow = m.stock <= m.reorderLevel;
               return <tr key={m.id}>
                 <td><div style={{fontWeight:700}}>{m.name}</div><div style={{fontSize:11,color:"#94a3b8"}}>{m.genericName}</div></td>
@@ -750,8 +776,8 @@ function MedicinesPage({ medicines, setMedicines, suppliers, setModal, nextId })
                 <td style={{fontSize:12,color:"#64748b"}}>{fmtDate(m.expiryDate)}</td>
                 <td><span className={`bdg ${m.status==="active"?"bdg-green":"bdg-gray"}`}>{m.status}</span></td>
                 <td><div style={{display:"flex",gap:4}}>
-                  <button className="btn-icon" onClick={()=>openForm(m)}>✏️</button>
-                  <button className="btn-icon danger" onClick={()=>{if(confirm(`Deactivate "${m.name}"?`))setMedicines(p=>p.map(x=>x.id===m.id?{...x,status:"inactive"}:x))}}>🗑️</button>
+                  <button className="btn-icon" title="Edit" onClick={()=>openEdit(m)}>✏️</button>
+                  <button className="btn-icon danger" title="Delete permanently" onClick={()=>deleteMed(m)}>🗑️</button>
                 </div></td>
               </tr>;
             })}
@@ -759,6 +785,43 @@ function MedicinesPage({ medicines, setMedicines, suppliers, setModal, nextId })
           </tbody>
         </table>
       </div></div></div>
+
+      {/* INLINE MEDICINE MODAL — bypasses global modal to avoid stale JSX snapshot bug */}
+      {medModal && (
+        <div className="pms-overlay" onClick={e=>e.target===e.currentTarget&&setMedModal(null)}>
+          <div className="pms-modal">
+            <div className="pms-modal-hdr">
+              <h3>{medModal.med ? "Edit Medicine" : "Add Medicine"}</h3>
+              <button className="pms-modal-close" onClick={()=>setMedModal(null)}>✕</button>
+            </div>
+            <div className="pms-modal-body">
+              {formErr && <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:13,color:"#991b1b"}}>⚠️ {formErr}</div>}
+              <div className="pms-fgrid">
+                <div className="pms-fg-m col2"><label>Medicine Name *</label><input value={form.name} onChange={e=>setF("name",e.target.value)} placeholder="e.g. Biogesic"/></div>
+                <div className="pms-fg-m"><label>Generic Name *</label><input value={form.genericName} onChange={e=>setF("genericName",e.target.value)} placeholder="e.g. Paracetamol 500mg"/></div>
+                <div className="pms-fg-m"><label>Category</label><select value={form.category} onChange={e=>setF("category",e.target.value)}>{CATS.map(o=><option key={o}>{o}</option>)}</select></div>
+                <div className="pms-fg-m"><label>Price (₱) *</label><input type="number" min="0" step="0.01" value={form.price} onChange={e=>setF("price",e.target.value)} style={{fontFamily:"'DM Mono',monospace"}}/></div>
+                <div className="pms-fg-m"><label>Stock</label><input type="number" min="0" value={form.stock} onChange={e=>setF("stock",e.target.value)}/></div>
+                <div className="pms-fg-m"><label>Reorder Level</label><input type="number" min="0" value={form.reorderLevel} onChange={e=>setF("reorderLevel",e.target.value)}/></div>
+                <div className="pms-fg-m"><label>Unit</label><select value={form.unit} onChange={e=>setF("unit",e.target.value)}>{UNITS.map(o=><option key={o}>{o}</option>)}</select></div>
+                <div className="pms-fg-m"><label>Supplier</label>
+                  <select value={form.supplierId} onChange={e=>setF("supplierId",e.target.value)}>
+                    <option value="">— None —</option>
+                    {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div className="pms-fg-m"><label>Expiry Date *</label><input type="date" value={form.expiryDate} onChange={e=>setF("expiryDate",e.target.value)}/></div>
+                {medModal.med && <div className="pms-fg-m"><label>Status</label><select value={form.status} onChange={e=>setF("status",e.target.value)}><option value="active">active</option><option value="inactive">inactive</option></select></div>}
+                <div className="pms-fg-m col2"><label>Description</label><input value={form.description} onChange={e=>setF("description",e.target.value)} placeholder="Optional notes"/></div>
+              </div>
+            </div>
+            <div className="pms-modal-footer">
+              <button className="btn-o" onClick={()=>setMedModal(null)}>Cancel</button>
+              <button className="btn-p" onClick={save}>{medModal.med ? "Save Changes" : "Add Medicine"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1083,7 +1146,7 @@ function UsersPage({ users, setUsers, setModal }) {
   return (
     <div>
       <div className="pms-ph"><div><h1>User Accounts</h1><p>Manage system access — only admins can create users</p></div><button className="btn-p" onClick={openCreate}>{I.plus} Create User</button></div>
-      <div className="pms-card" style={{maxWidth:600}}>
+      <div className="pms-card">
         <div className="pms-card-body no-pad"><div className="pms-tbl-wrap"><table>
           <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead>
           <tbody>
@@ -1101,7 +1164,7 @@ function UsersPage({ users, setUsers, setModal }) {
           </tbody>
         </table></div></div>
       </div>
-      <div className="pms-card" style={{maxWidth:600,marginTop:16}}>
+      <div className="pms-card" style={{marginTop:16}}>
         <div className="pms-card-hdr"><span className="pms-card-title">⚠️ Security Note</span></div>
         <div className="pms-card-body"><p style={{fontSize:13,color:"#64748b"}}>Only administrators can create new user accounts. The default admin account is protected and cannot be deleted. Keep credentials secure and change the default password after first login.</p></div>
       </div>

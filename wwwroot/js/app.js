@@ -411,7 +411,7 @@ async function renderMedicines() {
       <td>
         <div style="display:flex;gap:4px">
           <button class="btn-icon" onclick="editMedicine(${m.id})" title="Edit">✏️</button>
-          <button class="btn-icon danger" onclick="deleteMedicine(${m.id}, '${m.name}')" title="Deactivate">🗑️</button>
+          <button class="btn-icon danger" onclick="deleteMedicine(${m.id}, '${m.name}')" title="Delete">🗑️</button>
         </div>
       </td>
     </tr>`).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon">💊</div><h3>No medicines yet</h3><p>Click "Add Medicine" to get started</p></div></td></tr>`;
@@ -480,7 +480,7 @@ function openAddMedicine() { openModal('Add Medicine', medicineForm()); }
 
 async function editMedicine(id) {
   const r = await api('GET', `/medicines/${id}`);
-  if (!r?.ok) return;
+  if (!r?.ok) { alert('Failed to load medicine. ID: ' + id); return; }
   openModal('Edit Medicine', medicineForm(r.data, window._suppliers || []));
 }
 
@@ -521,7 +521,7 @@ function buildMedicinePayload() {
 }
 
 async function deleteMedicine(id, name) {
-  if (!confirm(`Deactivate "${name}"?`)) return;
+  if (!confirm(`Delete "${name}"?`)) return;
   await api('DELETE', `/medicines/${id}`); renderMedicines();
 }
 

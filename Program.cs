@@ -207,9 +207,9 @@ app.MapPut("/api/medicines/{id}", async (AppDbContext db, int id, Medicine updat
 
 app.MapDelete("/api/medicines/{id}", async (AppDbContext db, int id) =>
 {
-    var med = await db.Medicines.FindAsync(id);
+var med = await db.Medicines.FindAsync(id);
     if (med == null) return Results.NotFound();
-    med.Status = "inactive";
+    db.Medicines.Remove(med);
     await db.SaveChangesAsync();
     return Results.Ok();
 }).RequireAuthorization();
