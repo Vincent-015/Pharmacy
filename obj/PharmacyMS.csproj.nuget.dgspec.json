@@ -1,23 +1,23 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\UU324\\Pharmacy\\PharmacyMS.csproj": {}
+    "C:\\Users\\UU305\\Pharmacy\\PharmacyMS.csproj": {}
   },
   "projects": {
-    "C:\\Users\\UU324\\Pharmacy\\PharmacyMS.csproj": {
+    "C:\\Users\\UU305\\Pharmacy\\PharmacyMS.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\UU324\\Pharmacy\\PharmacyMS.csproj",
+        "projectUniqueName": "C:\\Users\\UU305\\Pharmacy\\PharmacyMS.csproj",
         "projectName": "PharmacyMS",
-        "projectPath": "C:\\Users\\UU324\\Pharmacy\\PharmacyMS.csproj",
-        "packagesPath": "C:\\Users\\UU324\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\UU324\\Pharmacy\\obj\\",
+        "projectPath": "C:\\Users\\UU305\\Pharmacy\\PharmacyMS.csproj",
+        "packagesPath": "C:\\Users\\UU305\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\UU305\\Pharmacy\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
         ],
         "configFilePaths": [
-          "C:\\Users\\UU324\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\UU305\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
