@@ -203,6 +203,53 @@ async function renderPOS() {
   renderPOSLayout();
 }
 
+// ── POS HELPERS ───────────────────────────────────────────────────────────
+const VAT_RATE = 0.12;
+
+function computePOSTotals() {
+  const subtotal      = posCart.reduce((s, i) => s + i.price * i.qty, 0);
+  const isSenior      = document.getElementById('posSenior')?.checked || false;
+  const isPwd         = document.getElementById('posPwd')?.checked    || false;
+  const extraDisc     = parseFloat(document.getElementById('posDiscount')?.value || 0) || 0;
+  const isSeniorOrPwd = isSenior || isPwd;
+  // PH rule: shelf prices are VAT-inclusive (12%).
+  // SC/PWD: VAT-exempt + 20% discount on the VAT-exclusive base price.
+  const vatExclBase   = subtotal / (1 + VAT_RATE);
+  const vatAmount     = isSeniorOrPwd ? 0 : subtotal - vatExclBase;
+  const scPwdDiscount = isSeniorOrPwd ? vatExclBase * 0.20 : 0;
+  const baseForTotal  = isSeniorOrPwd ? vatExclBase : subtotal;
+  const totalDiscount = scPwdDiscount + extraDisc;
+  const total         = Math.max(0, baseForTotal - totalDiscount);
+  const amtPaid       = parseFloat(document.getElementById('posAmtPaid')?.value || 0) || 0;
+  const change        = Math.max(0, amtPaid - total);
+  return { subtotal, vatExclBase, vatAmount, scPwdDiscount, extraDisc, totalDiscount, total, amtPaid, change, isSenior, isPwd, isSeniorOrPwd };
+}
+
+function updatePOSTotals() {
+  const t = computePOSTotals();
+  const block = document.getElementById('posTotalsBlock');
+  if (!block) return;
+
+  let rows = `<div class="cart-row"><span>Subtotal (VAT-incl.)</span><span>${fmt(t.subtotal)}</span></div>`;
+  if (t.isSeniorOrPwd) {
+    rows += `<div class="cart-row" style="color:var(--text3);font-size:12px"><span>  VAT-exclusive base</span><span>${fmt(t.vatExclBase)}</span></div>`;
+    rows += `<div class="cart-row" style="color:#e05c2a;font-size:12px"><span>  SC/PWD 20% discount</span><span>−${fmt(t.scPwdDiscount)}</span></div>`;
+    rows += `<div class="cart-row" style="color:#16a34a;font-size:12px"><span>  VAT</span><span>EXEMPT</span></div>`;
+  } else {
+    rows += `<div class="cart-row" style="color:var(--text3);font-size:12px"><span>  VAT (12% incl.)</span><span>${fmt(t.vatAmount)}</span></div>`;
+  }
+  block.innerHTML = rows;
+
+  const totalRow = document.getElementById('posTotalRow');
+  if (totalRow) totalRow.querySelector('span:last-child').textContent = fmt(t.total);
+
+  const changeRow = document.getElementById('posChangeRow');
+  if (changeRow) changeRow.querySelector('span:last-child').textContent = fmt(t.change);
+
+  const btn = document.getElementById('checkoutBtn');
+  if (btn) btn.textContent = `✓ Checkout — ${fmt(t.total)}`;
+}
+
 function renderPOSLayout(search = '') {
   const filtered = search ? posProducts.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.genericName.toLowerCase().includes(search.toLowerCase()) || m.category.toLowerCase().includes(search.toLowerCase())) : posProducts;
 
@@ -234,11 +281,13 @@ function renderPOSLayout(search = '') {
         </button>
       </div>`).join('');
 
-  const subtotal = posCart.reduce((s, i) => s + i.price * i.qty, 0);
-  const discount = parseFloat(document.getElementById('posDiscount')?.value || 0) || 0;
-  const total = Math.max(0, subtotal - discount);
-  const amtPaid = parseFloat(document.getElementById('posAmtPaid')?.value || 0) || 0;
-  const change = Math.max(0, amtPaid - total);
+  // Preserve UI state across re-renders
+  const prevSenior = document.getElementById('posSenior')?.checked || false;
+  const prevPwd    = document.getElementById('posPwd')?.checked    || false;
+  const prevDisc   = document.getElementById('posDiscount')?.value || '0';
+  const prevPaid   = document.getElementById('posAmtPaid')?.value  || '0';
+  const prevCust   = document.getElementById('posCustomer')?.value || '';
+  const prevPay    = document.getElementById('posPayment')?.value  || 'cash';
 
   document.getElementById('pageContent').innerHTML = `
     <div class="pos-layout">
@@ -261,35 +310,54 @@ function renderPOSLayout(search = '') {
           <div class="cart-row"><span>Customer</span>
             <select id="posCustomer" style="width:160px;padding:5px 8px;font-size:12px">
               <option value="">Walk-in</option>
-              ${posCustomers.map(c => `<option value="${c.id}">${c.firstName} ${c.lastName}</option>`).join('')}
+              ${posCustomers.map(c => `<option value="${c.id}" ${prevCust == c.id ? 'selected' : ''}>${c.firstName} ${c.lastName}</option>`).join('')}
             </select>
           </div>
           <div class="cart-row"><span>Payment</span>
             <select id="posPayment" style="width:120px;padding:5px 8px;font-size:12px">
-              <option value="cash">Cash</option>
-              <option value="gcash">GCash</option>
-              <option value="card">Card</option>
-              <option value="maya">Maya</option>
+              <option value="cash" ${prevPay==='cash'?'selected':''}>Cash</option>
+              <option value="gcash" ${prevPay==='gcash'?'selected':''}>GCash</option>
+              <option value="card" ${prevPay==='card'?'selected':''}>Card</option>
+              <option value="maya" ${prevPay==='maya'?'selected':''}>Maya</option>
             </select>
           </div>
-          <div class="cart-row"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
-          <div class="cart-row">
-            <span>Discount (₱)</span>
-            <input type="number" id="posDiscount" value="${discount}" min="0" style="width:90px;text-align:right;padding:4px 8px" onInput="updatePOSTotals()" />
+
+          <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px">
+            <div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.05em;margin-bottom:6px">DISCOUNT TYPE</div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-bottom:5px;padding:6px 8px;border-radius:6px;background:${prevSenior ? 'var(--primary-light,#e0f2fe)' : 'transparent'}">
+              <input type="checkbox" id="posSenior" ${prevSenior ? 'checked' : ''} onchange="updatePOSTotals()" style="width:15px;height:15px;accent-color:var(--primary)"/>
+              👴 Senior Citizen <span style="margin-left:auto;font-size:11px;color:var(--text3)">20% + VAT-exempt</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:6px;background:${prevPwd ? 'var(--primary-light,#e0f2fe)' : 'transparent'}">
+              <input type="checkbox" id="posPwd" ${prevPwd ? 'checked' : ''} onchange="updatePOSTotals()" style="width:15px;height:15px;accent-color:var(--primary)"/>
+              ♿ PWD <span style="margin-left:auto;font-size:11px;color:var(--text3)">20% + VAT-exempt</span>
+            </label>
           </div>
-          <div class="cart-row total"><span>TOTAL</span><span>${fmt(total)}</span></div>
+
+          <div id="posTotalsBlock"></div>
+
+          <div class="cart-row">
+            <span>Extra Discount (₱)</span>
+            <input type="number" id="posDiscount" value="${prevDisc}" min="0" style="width:90px;text-align:right;padding:4px 8px" onInput="updatePOSTotals()" />
+          </div>
+
+          <div id="posTotalRow" class="cart-row total"><span>TOTAL</span><span>—</span></div>
+
           <div class="cart-row">
             <span>Amount Paid</span>
-            <input type="number" id="posAmtPaid" value="${amtPaid}" min="0" style="width:100px;text-align:right;padding:4px 8px" onInput="updatePOSTotals()" />
+            <input type="number" id="posAmtPaid" value="${prevPaid}" min="0" style="width:100px;text-align:right;padding:4px 8px" onInput="updatePOSTotals()" />
           </div>
-          <div class="cart-row" style="color:var(--green);font-weight:600"><span>Change</span><span>${fmt(change)}</span></div>
-          <button class="checkout-btn" onclick="checkoutPOS()" ${posCart.length === 0 ? 'disabled' : ''}>
-            ✓ Checkout — ${fmt(total)}
+          <div id="posChangeRow" class="cart-row" style="color:var(--green);font-weight:600"><span>Change</span><span>—</span></div>
+
+          <button class="checkout-btn" id="checkoutBtn" onclick="checkoutPOS()" ${posCart.length === 0 ? 'disabled' : ''}>
+            ✓ Checkout — —
           </button>
           <button class="btn-outline" style="width:100%;margin-top:8px;justify-content:center" onclick="posCart=[];renderPOSLayout()">Clear Cart</button>
         </div>
       </div>
     </div>`;
+
+  updatePOSTotals();
 }
 
 function addToCart(id) {
@@ -316,34 +384,22 @@ function updateCartQty(idx, delta) {
 
 function removeFromCart(idx) { posCart.splice(idx, 1); renderPOSLayout(); }
 
-function updatePOSTotals() {
-  const subtotal = posCart.reduce((s, i) => s + i.price * i.qty, 0);
-  const discount = parseFloat(document.getElementById('posDiscount')?.value || 0) || 0;
-  const total = Math.max(0, subtotal - discount);
-  const amtPaid = parseFloat(document.getElementById('posAmtPaid')?.value || 0) || 0;
-  const change = Math.max(0, amtPaid - total);
-  document.querySelectorAll('.cart-row.total span:last-child').forEach(el => el.textContent = fmt(total));
-  document.querySelectorAll('.cart-row span:last-child').forEach((el, i) => { /* handled by re-render */ });
-  document.querySelector('.checkout-btn').textContent = `✓ Checkout — ${fmt(total)}`;
-  document.querySelectorAll('.cart-row').forEach(row => {
-    if (row.querySelector('span')?.textContent === 'Change') row.querySelectorAll('span')[1].textContent = fmt(change);
-  });
-}
-
 async function checkoutPOS() {
   if (posCart.length === 0) return;
-  const discount = parseFloat(document.getElementById('posDiscount')?.value || 0) || 0;
-  const amtPaid = parseFloat(document.getElementById('posAmtPaid')?.value || 0) || 0;
-  const subtotal = posCart.reduce((s, i) => s + i.price * i.qty, 0);
-  const total = Math.max(0, subtotal - discount);
-  if (amtPaid < total) { alert('Amount paid is less than total!'); return; }
+  const t = computePOSTotals();
+  if (t.amtPaid < t.total) { alert('Amount paid is less than total!'); return; }
+
+  // Snapshot cart before clearing (for receipt line items)
+  const cartSnapshot = posCart.map(i => ({ ...i }));
 
   const payload = {
     customerId: document.getElementById('posCustomer')?.value ? parseInt(document.getElementById('posCustomer').value) : null,
     items: posCart.map(i => ({ medicineId: i.id, quantity: i.qty })),
-    discount,
+    discount: t.extraDisc,
+    isSenior: t.isSenior,
+    isPwd: t.isPwd,
     paymentMethod: document.getElementById('posPayment')?.value || 'cash',
-    amountPaid: amtPaid,
+    amountPaid: t.amtPaid,
     notes: null
   };
 
@@ -352,9 +408,17 @@ async function checkoutPOS() {
 
   const sale = r.data;
   posCart = [];
-  // Refresh products
   const medsR = await api('GET', '/medicines?status=active');
   posProducts = medsR?.data?.filter(m => m.stock > 0) || [];
+
+  const discountLabel = t.isSeniorOrPwd
+    ? `SC/PWD 20%${t.extraDisc > 0 ? ` + extra ${fmt(t.extraDisc)}` : ''}`
+    : t.extraDisc > 0 ? `Manual discount` : null;
+
+  const itemRows = cartSnapshot.map(i =>
+    `<div class="receipt-item" style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
+      <div>${i.name} × ${i.qty}</div><div>${fmt(i.price * i.qty)}</div>
+    </div>`).join('');
 
   const receiptHtml = `
     <div class="receipt-content">
@@ -365,23 +429,20 @@ async function checkoutPOS() {
       </div>
       <hr class="receipt-divider"/>
       <div class="receipt-row bold"><span>Receipt #:</span><span>${sale.receiptNumber}</span></div>
+      ${t.isSeniorOrPwd ? `<div class="receipt-row" style="color:#e05c2a;font-size:12px"><span>${t.isSenior ? '👴 Senior Citizen' : '♿ PWD'}</span><span>VAT-EXEMPT</span></div>` : ''}
       <hr class="receipt-divider"/>
-      <div class="receipt-items">
-        ${payload.items.map(item => {
-          const med = posProducts.find(m => m.id === item.medicineId) || { name: `Med #${item.medicineId}`, price: 0 };
-          return `<div class="receipt-item"><div class="receipt-item-name">${posCart.find ? '' : ''}${item.medicineId}</div></div>`;
-        }).join('')}
-        ${sale.receiptNumber ? payload.items.map((item, i) => {
-          const cartItem = JSON.parse(localStorage.getItem('lastCart') || '[]')[i];
-          return '';
-        }).join('') : ''}
-      </div>
+      <div class="receipt-items">${itemRows}</div>
       <hr class="receipt-divider"/>
-      <div class="receipt-row"><span>Subtotal:</span><span>${fmt(subtotal)}</span></div>
-      <div class="receipt-row"><span>Discount:</span><span>−${fmt(discount)}</span></div>
-      <div class="receipt-row bold"><span>TOTAL:</span><span>${fmt(sale.total || total)}</span></div>
-      <div class="receipt-row"><span>Paid:</span><span>${fmt(amtPaid)}</span></div>
-      <div class="receipt-row"><span>Change:</span><span>${fmt(sale.change || (amtPaid - total))}</span></div>
+      <div class="receipt-row"><span>Subtotal (VAT-incl.):</span><span>${fmt(t.subtotal)}</span></div>
+      ${t.isSeniorOrPwd
+        ? `<div class="receipt-row" style="font-size:12px"><span>VAT-exclusive base:</span><span>${fmt(t.vatExclBase)}</span></div>
+           <div class="receipt-row" style="color:#e05c2a;font-size:12px"><span>SC/PWD 20% discount:</span><span>−${fmt(t.scPwdDiscount)}</span></div>
+           <div class="receipt-row" style="color:#16a34a;font-size:12px"><span>VAT:</span><span>EXEMPT</span></div>`
+        : `<div class="receipt-row" style="font-size:12px;color:var(--text3)"><span>VAT (12%, incl.):</span><span>${fmt(t.vatAmount)}</span></div>`}
+      ${t.extraDisc > 0 ? `<div class="receipt-row" style="color:#e05c2a;font-size:12px"><span>Extra discount:</span><span>−${fmt(t.extraDisc)}</span></div>` : ''}
+      <div class="receipt-row bold"><span>TOTAL:</span><span>${fmt(sale.total)}</span></div>
+      <div class="receipt-row"><span>Paid:</span><span>${fmt(t.amtPaid)}</span></div>
+      <div class="receipt-row" style="color:var(--green);font-weight:600"><span>Change:</span><span>${fmt(sale.change)}</span></div>
       <hr class="receipt-divider"/>
       <div style="text-align:center;font-size:11px;color:var(--text3)">Thank you for your purchase!<br>Please keep this receipt.</div>
     </div>`;
@@ -438,6 +499,7 @@ async function renderMedicines() {
     </div>`;
 
   window._suppliers = suppliers;
+  window._medicines = meds;
 }
 
 function medicineForm(m = null, suppliers = window._suppliers || []) {
@@ -478,10 +540,11 @@ function medicineForm(m = null, suppliers = window._suppliers || []) {
 
 function openAddMedicine() { openModal('Add Medicine', medicineForm()); }
 
-async function editMedicine(id) {
-  const r = await api('GET', `/medicines/${id}`);
-  if (!r?.ok) { alert('Failed to load medicine. ID: ' + id); return; }
-  openModal('Edit Medicine', medicineForm(r.data, window._suppliers || []));
+function editMedicine(id) {
+  // Use locally cached data — avoids broken GET /medicines/:id server endpoint
+  const med = (window._medicines || []).find(m => Number(m.id) === Number(id));
+  if (!med) { alert('Could not find medicine. Please refresh the page first.'); return; }
+  openModal('Edit Medicine', medicineForm(med, window._suppliers || []));
 }
 
 async function addMedicine() {
