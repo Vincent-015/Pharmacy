@@ -361,10 +361,39 @@ app.MapPost("/api/sales", async (AppDbContext db, CreateSaleRequest req) =>
         saleItems.Add(new SaleItem { MedicineId = item.MedicineId, Quantity = item.Quantity, UnitPrice = med.Price, Subtotal = subtotal });
     }
 
+    // PH VAT rules: shelf prices are VAT-inclusive (12%).
+    // Senior Citizens and PWD are VAT-exempt AND get 20% discount on the VAT-exclusive base.
+    // Formula: vatExclusive = subtotal / 1.12, seniorDiscount = vatExclusive * 0.20
+    // Regular customers: VAT is already included in the shelf price (no extra charge).
+    const decimal VAT_RATE = 0.12m;
+    bool isSeniorOrPwd = req.IsSenior || req.IsPwd;
+
+    decimal vatAmount = 0;
+    decimal seniorPwdDiscount = 0;
+    decimal vatExclusiveBase = Math.Round(subTotal / (1 + VAT_RATE), 2);
+
+    if (isSeniorOrPwd)
+    {
+        // VAT-exempt: remove VAT from price, then apply 20% SC/PWD discount on the base
+        vatAmount = 0; // VAT-exempt
+        seniorPwdDiscount = Math.Round(vatExclusiveBase * 0.20m, 2);
+    }
+    else
+    {
+        // Regular: VAT is embedded in shelf price; surface it for the receipt
+        vatAmount = Math.Round(subTotal - vatExclusiveBase, 2);
+        seniorPwdDiscount = 0;
+    }
+
+    decimal totalDiscount = seniorPwdDiscount + req.Discount; // req.Discount = extra manual discount
+    decimal totalBeforeDiscount = isSeniorOrPwd ? vatExclusiveBase : subTotal;
+    decimal finalTotal = Math.Max(0, Math.Round(totalBeforeDiscount - totalDiscount, 2));
+
     sale.SubTotal = subTotal;
-    sale.Tax = 0; // VAT-exempt for medicines in PH
-    sale.Total = subTotal - req.Discount;
-    sale.Change = req.AmountPaid - sale.Total;
+    sale.Tax = vatAmount;
+    sale.Discount = totalDiscount;
+    sale.Total = finalTotal;
+    sale.Change = req.AmountPaid - finalTotal;
 
     db.Sales.Add(sale);
     await db.SaveChangesAsync();
@@ -381,7 +410,12 @@ app.MapPost("/api/sales", async (AppDbContext db, CreateSaleRequest req) =>
     }
     await db.SaveChangesAsync();
 
-    return Results.Created($"/api/sales/{sale.Id}", new { sale.Id, sale.ReceiptNumber, sale.Total, sale.Change, sale.Status });
+    return Results.Created($"/api/sales/{sale.Id}", new {
+        sale.Id, sale.ReceiptNumber, sale.SubTotal, sale.Tax, sale.Discount,
+        sale.Total, sale.Change, sale.Status,
+        seniorPwdDiscount, isSeniorOrPwd,
+        vatExclusiveBase = isSeniorOrPwd ? vatExclusiveBase : (decimal?)null
+    });
 }).RequireAuthorization();
 
 // ─── STOCK ────────────────────────────────────────────────────────────────────
@@ -450,5 +484,5 @@ app.Run();
 record LoginRequest(string Username, string Password);
 record CreateUserRequest(string Username, string Password, string? Role);
 record SaleItemRequest(int MedicineId, int Quantity);
-record CreateSaleRequest(int? CustomerId, List<SaleItemRequest> Items, decimal Discount, string PaymentMethod, decimal AmountPaid, string? Notes);
+record CreateSaleRequest(int? CustomerId, List<SaleItemRequest> Items, decimal Discount, bool IsSenior, bool IsPwd, string PaymentMethod, decimal AmountPaid, string? Notes);
 record StockAdjustRequest(int MedicineId, string Type, int Quantity, string Reason);
