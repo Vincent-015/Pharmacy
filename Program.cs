@@ -165,7 +165,14 @@ app.MapGet("/api/medicines", async (AppDbContext db, string? search, string? cat
 app.MapGet("/api/medicines/{id}", async (AppDbContext db, int id) =>
 {
     var m = await db.Medicines.Include(x => x.Supplier).FirstOrDefaultAsync(x => x.Id == id);
-    return m == null ? Results.NotFound() : Results.Ok(m);
+    if (m == null) return Results.NotFound();
+    return Results.Ok(new {
+        m.Id, m.Name, m.GenericName, m.Category, m.Description, m.Price, m.Stock,
+        m.ReorderLevel, m.Unit, m.Barcode, m.SupplierId, m.ExpiryDate, m.Status, m.CreatedAt,
+        supplierName = m.Supplier?.Name,
+        isLowStock = m.Stock <= m.ReorderLevel,
+        isExpiringSoon = m.ExpiryDate <= DateTime.UtcNow.AddDays(30)
+    });
 }).RequireAuthorization();
 
 app.MapPost("/api/medicines", async (AppDbContext db, Medicine med) =>
