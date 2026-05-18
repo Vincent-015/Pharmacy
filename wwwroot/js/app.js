@@ -83,6 +83,23 @@ async function api(method, path, body) {
   catch { return { ok: res.ok, status: res.status, data: text }; }
 }
 
+function notify(msg, isError = false) {
+  const existing = document.getElementById('pms-notify');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'pms-notify';
+  el.textContent = msg;
+  el.style.cssText = `position:fixed;top:20px;right:24px;z-index:9999;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:500;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.18);background:${isError ? '#e53e3e' : '#2d8a4e'};transition:opacity 0.4s`;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, 3000);
+}
+
+function apiError(r, fallback) {
+  if (!r) return; // 401 — user already logged out
+  const msg = r?.data?.error || (typeof r?.data === 'string' && r.data) || fallback || 'Something went wrong.';
+  notify(msg, true);
+}
+
 // ── NAVIGATION ────────────────────────────────────────────────────────────
 function navigate(page) {
   currentPage = page;
@@ -389,7 +406,7 @@ function addToCart(id) {
   if (!med) return;
   const existing = posCart.find(i => i.id === id);
   if (existing) {
-    if (existing.qty >= med.stock) { alert(`Only ${med.stock} ${med.unit}(s) available`); return; }
+    if (existing.qty >= med.stock) { notify(`Only ${med.stock} ${med.unit}(s) available`, true); return; }
     existing.qty++;
   } else {
     posCart.push({ id: med.id, name: med.name, price: med.price, qty: 1, stock: med.stock, unit: med.unit });
@@ -401,7 +418,7 @@ function updateCartQty(idx, delta) {
   const item = posCart[idx];
   const newQty = item.qty + delta;
   if (newQty <= 0) { posCart.splice(idx, 1); }
-  else if (newQty > item.stock) { alert(`Only ${item.stock} available`); return; }
+  else if (newQty > item.stock) { notify(`Only ${item.stock} available`, true); return; }
   else { item.qty = newQty; }
   renderPOSLayout(document.querySelector('.pos-products input')?.value || '');
 }
@@ -425,7 +442,7 @@ async function checkoutPOS() {
   const amtPaid    = parseFloat(document.getElementById('posAmtPaid')?.value || 0) || 0;
   const change     = Math.max(0, amtPaid - total);
 
-  if (amtPaid < total) { alert('Amount paid is less than total!'); return; }
+  if (amtPaid < total) { notify('Amount paid is less than total!', true); return; }
 
   const cartSnapshot = [...posCart]; // save before clearing
 
@@ -440,7 +457,7 @@ async function checkoutPOS() {
   };
 
   const r = await api('POST', '/sales', payload);
-  if (!r?.ok) { alert('Checkout failed: ' + (r?.data?.error || 'Unknown error')); return; }
+  if (!r?.ok) { apiError(r, 'Checkout failed.'); return; }
 
   const sale = r.data;
 
@@ -508,6 +525,7 @@ async function checkoutPOS() {
 async function renderMedicines() {
   document.getElementById('pageContent').innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
   const [medsR, supR] = await Promise.all([api('GET', '/medicines'), api('GET', '/suppliers')]);
+  if (!medsR?.ok) { apiError(medsR, 'Could not load medicines. Please refresh.'); document.getElementById('pageContent').innerHTML = ''; return; }
   const meds = medsR?.data || [];
   const suppliers = supR?.data || [];
 
@@ -593,25 +611,30 @@ function medicineForm(m = null, suppliers = window._suppliers || []) {
 function openAddMedicine() { openModal('Add Medicine', medicineForm()); }
 
 async function editMedicine(id) {
-  const r = await api('GET', `/medicines/${id}`);
-  if (!r?.ok) return;
-  openModal('Edit Medicine', medicineForm(r.data, window._suppliers || []));
+  const [medR, supR] = await Promise.all([
+    api('GET', `/medicines/${id}`),
+    window._suppliers?.length ? Promise.resolve({ ok: true, data: window._suppliers }) : api('GET', '/suppliers')
+  ]);
+  if (!medR?.ok) { if (medR) apiError(medR, 'Could not load medicine details. Please try again.'); return; }
+  const suppliers = supR?.data || window._suppliers || [];
+  window._suppliers = suppliers;
+  openModal('Edit Medicine', medicineForm(medR.data, suppliers));
 }
 
 async function addMedicine() {
   const payload = buildMedicinePayload();
   if (!payload) return;
   const r = await api('POST', '/medicines', payload);
-  if (!r?.ok) { alert('Failed: ' + (r?.data?.error || JSON.stringify(r?.data))); return; }
-  closeModalDirect(); renderMedicines();
+  if (!r || (!r.ok && r.status !== 201)) { apiError(r, 'Failed to add medicine.'); return; }
+  closeModalDirect(); renderMedicines(); notify('Medicine added successfully!');
 }
 
 async function saveMedicine(id) {
   const payload = buildMedicinePayload();
   if (!payload) return;
   const r = await api('PUT', `/medicines/${id}`, payload);
-  if (!r?.ok) { alert('Failed: ' + JSON.stringify(r?.data)); return; }
-  closeModalDirect(); renderMedicines();
+  if (!r?.ok) { apiError(r, 'Failed to update medicine.'); return; }
+  closeModalDirect(); renderMedicines(); notify('Medicine updated successfully!');
 }
 
 function buildMedicinePayload() {
@@ -619,7 +642,7 @@ function buildMedicinePayload() {
   const generic = document.getElementById('mGeneric')?.value.trim();
   const price = parseFloat(document.getElementById('mPrice')?.value);
   const expiry = document.getElementById('mExpiry')?.value;
-  if (!name || !generic || isNaN(price) || !expiry) { alert('Please fill in all required fields.'); return null; }
+  if (!name || !generic || isNaN(price) || !expiry) { notify('Please fill in all required fields.', true); return null; }
   return {
     name, genericName: generic,
     category: document.getElementById('mCategory')?.value,
@@ -693,17 +716,17 @@ async function editSupplier(id) {
 }
 async function addSupplier() {
   const name = document.getElementById('sName')?.value.trim();
-  if (!name) { alert('Name required'); return; }
+  if (!name) { notify('Name is required.', true); return; }
   const r = await api('POST', '/suppliers', { name, contactPerson: document.getElementById('sContact').value, phone: document.getElementById('sPhone').value, email: document.getElementById('sEmail').value, address: document.getElementById('sAddress').value, status: 'active' });
-  if (!r?.ok) { alert('Failed'); return; }
-  closeModalDirect(); renderSuppliers();
+  if (!r?.ok) { apiError(r, 'Failed to add supplier.'); return; }
+  closeModalDirect(); renderSuppliers(); notify('Supplier added successfully!');
 }
 async function saveSupplier(id) {
   const name = document.getElementById('sName')?.value.trim();
-  if (!name) { alert('Name required'); return; }
+  if (!name) { notify('Name is required.', true); return; }
   const r = await api('PUT', `/suppliers/${id}`, { name, contactPerson: document.getElementById('sContact').value, phone: document.getElementById('sPhone').value, email: document.getElementById('sEmail').value, address: document.getElementById('sAddress').value, status: document.getElementById('sStatus')?.value || 'active' });
-  if (!r?.ok) { alert('Failed'); return; }
-  closeModalDirect(); renderSuppliers();
+  if (!r?.ok) { apiError(r, 'Failed to update supplier.'); return; }
+  closeModalDirect(); renderSuppliers(); notify('Supplier updated successfully!');
 }
 async function deleteSupplier(id, name) {
   if (!confirm(`Delete supplier "${name}"?`)) return;
@@ -781,10 +804,10 @@ async function saveStockAdjust() {
   const type = document.getElementById('adjType')?.value;
   const qty = parseInt(document.getElementById('adjQty')?.value);
   const reason = document.getElementById('adjReason')?.value.trim();
-  if (!medId || !qty || !reason) { alert('Fill all fields'); return; }
+  if (!medId || !qty || !reason) { notify('Please fill in all fields.', true); return; }
   const r = await api('POST', '/stock/adjust', { medicineId: medId, type, quantity: qty, reason });
-  if (!r?.ok) { alert(r?.data?.error || 'Failed'); return; }
-  closeModalDirect(); renderStock();
+  if (!r?.ok) { apiError(r, 'Failed to adjust stock.'); return; }
+  closeModalDirect(); renderStock(); notify('Stock adjusted successfully!');
 }
 
 // ── CUSTOMERS ─────────────────────────────────────────────────────────────
@@ -836,15 +859,15 @@ async function editCustomer(id) { const c = window._customers_data?.find(x => x.
 async function addCustomer() {
   const fn = document.getElementById('cFirst')?.value.trim();
   const ln = document.getElementById('cLast')?.value.trim();
-  if (!fn || !ln) { alert('First and Last name required'); return; }
+  if (!fn || !ln) { notify('First and last name are required.', true); return; }
   const r = await api('POST', '/customers', { firstName: fn, lastName: ln, phone: document.getElementById('cPhone').value, email: document.getElementById('cEmail').value, address: document.getElementById('cAddress').value });
-  if (!r?.ok) { alert('Failed'); return; }
-  closeModalDirect(); renderCustomers();
+  if (!r?.ok) { apiError(r, 'Failed to save customer.'); return; }
+  closeModalDirect(); renderCustomers(); notify('Customer saved successfully!');
 }
 async function saveCustomer(id) {
   const fn = document.getElementById('cFirst')?.value.trim();
   const ln = document.getElementById('cLast')?.value.trim();
-  if (!fn || !ln) { alert('Name required'); return; }
+  if (!fn || !ln) { notify('Name is required.', true); return; }
   await api('PUT', `/customers/${id}`, { firstName: fn, lastName: ln, phone: document.getElementById('cPhone').value, email: document.getElementById('cEmail').value, address: document.getElementById('cAddress').value });
   closeModalDirect(); renderCustomers();
 }
@@ -905,14 +928,14 @@ function openAddEmployee() { openModal('Add Employee', employeeForm()); }
 async function editEmployee(id) { const e = window._employees_data?.find(x => x.id === id); if (e) openModal('Edit Employee', employeeForm(e)); }
 async function addEmployee() {
   const fn = document.getElementById('eFirst')?.value.trim(), ln = document.getElementById('eLast')?.value.trim();
-  if (!fn || !ln) { alert('Name required'); return; }
+  if (!fn || !ln) { notify('Name is required.', true); return; }
   const r = await api('POST', '/employees', { firstName: fn, lastName: ln, position: document.getElementById('ePos').value, phone: document.getElementById('ePhone').value, email: document.getElementById('eEmail').value, hiredAt: document.getElementById('eHired').value, status: 'active' });
-  if (!r?.ok) { alert('Failed'); return; }
-  closeModalDirect(); renderEmployees();
+  if (!r?.ok) { apiError(r, 'Failed to save employee.'); return; }
+  closeModalDirect(); renderEmployees(); notify('Employee saved successfully!');
 }
 async function saveEmployee(id) {
   const fn = document.getElementById('eFirst')?.value.trim(), ln = document.getElementById('eLast')?.value.trim();
-  if (!fn || !ln) { alert('Name required'); return; }
+  if (!fn || !ln) { notify('Name is required.', true); return; }
   await api('PUT', `/employees/${id}`, { firstName: fn, lastName: ln, position: document.getElementById('ePos').value, phone: document.getElementById('ePhone').value, email: document.getElementById('eEmail').value, hiredAt: document.getElementById('eHired').value, status: document.getElementById('eStatus')?.value || 'active' });
   closeModalDirect(); renderEmployees();
 }
@@ -1022,11 +1045,11 @@ async function createUser() {
   const username = document.getElementById('uUser')?.value.trim();
   const password = document.getElementById('uPass')?.value;
   const role = document.getElementById('uRole')?.value;
-  if (!username || !password) { alert('Username and password required'); return; }
-  if (password.length < 6) { alert('Password must be at least 6 characters'); return; }
+  if (!username || !password) { notify('Username and password are required.', true); return; }
+  if (password.length < 6) { notify('Password must be at least 6 characters.', true); return; }
   const r = await api('POST', '/auth/create-user', { username, password, role });
-  if (!r?.ok) { alert(r?.data?.error || 'Failed'); return; }
-  closeModalDirect(); renderUsers();
+  if (!r?.ok) { apiError(r, 'Failed to create user.'); return; }
+  closeModalDirect(); renderUsers(); notify('User created successfully!');
 }
 
 async function deleteUser(id, name) {
